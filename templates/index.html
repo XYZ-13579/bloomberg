@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CYBER INTELLIGENCE // NEWS MONITOR</title>
+<style>
+:root{
+  --bg:#020a04;
+  --bg-panel:#051408;
+  --neon-blue:#00ff66; 
+  --neon-cyan:#32ff32;
+  --neon-purple:#00cc00;
+  --neon-green:#00ff9c;
+  --text-dim:#4d804d;
+  --text:#ccffcc;
+  --border:rgba(0,255,102,0.25);
+  --font-mono:'Consolas','SFMono-Regular','Courier New',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:var(--font-mono);
+  overflow-x:hidden;
+  min-height:100vh;
+  position:relative;
+}
+
+/* ============ 背景演出 ============ */
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;}
+.scanlines{
+  position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:repeating-linear-gradient(
+    to bottom, rgba(0,255,102,0.02) 0px, rgba(0,255,102,0.02) 1px,
+    transparent 2px, transparent 4px
+  );
+  mix-blend-mode:screen;
+}
+.vignette{
+  position:fixed;inset:0;z-index:1;pointer-events:none;
+  background:radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.85) 100%);
+}
+.grid-bg{
+  position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.25;
+  background-image:
+    linear-gradient(rgba(0,255,102,0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,255,102,0.08) 1px, transparent 1px);
+  background-size:42px 42px;
+  animation:gridMove 18s linear infinite;
+}
+@keyframes gridMove{ from{background-position:0 0;} to{background-position:42px 42px;} }
+
+/* ============ レイアウト ============ */
+#app{
+  position:relative;z-index:2;
+  display:grid;
+  grid-template-rows:auto auto 1fr auto;
+  min-height:100vh;
+}
+
+/* 上: タイトルバー */
+header.titlebar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 24px;
+  border-bottom:1px solid var(--border);
+  background:linear-gradient(180deg, rgba(0,255,102,0.06), transparent);
+  backdrop-filter:blur(4px);
+}
+.brand{display:flex;align-items:center;gap:10px;}
+.brand .glyph{
+  width:30px;height:30px;border:1px solid var(--neon-blue);
+  display:flex;align-items:center;justify-content:center;
+  color:var(--neon-blue);font-weight:bold;
+  box-shadow:0 0 12px var(--neon-blue);
+  animation:pulseGlyph 3s ease-in-out infinite;
+}
+@keyframes pulseGlyph{0%,100%{box-shadow:0 0 8px var(--neon-blue);}50%{box-shadow:0 0 20px var(--neon-blue);}}
+.brand h1{
+  font-size:16px;letter-spacing:4px;font-weight:600;
+  color:var(--neon-blue);text-shadow:0 0 10px rgba(0,255,102,0.6);
+}
+.brand span.sub{display:block;font-size:9px;letter-spacing:3px;color:var(--text-dim);margin-top:2px;}
+.status-chip{
+  font-size:10px;letter-spacing:2px;padding:5px 12px;border:1px solid var(--neon-green);
+  color:var(--neon-green);border-radius:2px;position:relative;
+}
+.status-chip::before{
+  content:'';position:absolute;left:6px;top:50%;transform:translateY(-50%);
+  width:6px;height:6px;border-radius:50%;background:var(--neon-green);
+  box-shadow:0 0 8px var(--neon-green);
+  animation:blink 1.4s ease-in-out infinite;
+}
+.status-chip{padding-left:20px;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.2;}}
+
+/* 検索バー */
+.search-zone{
+  padding:18px 24px;border-bottom:1px solid var(--border);
+  display:flex;gap:12px;align-items:center;
+  background:rgba(5,20,8,0.5);
+}
+.search-input-wrap{
+  flex:1;position:relative;display:flex;align-items:center;
+  border:1px solid var(--border);background:rgba(0,255,102,0.03);
+  transition:border-color .25s, box-shadow .25s;
+}
+.search-input-wrap:focus-within{
+  border-color:var(--neon-blue);
+  box-shadow:0 0 16px rgba(0,255,102,0.35);
+}
+.search-input-wrap::before{
+  content:'>';color:var(--neon-green);padding:0 10px;font-weight:bold;
+}
+#queryInput{
+  flex:1;background:transparent;border:none;outline:none;
+  color:var(--text);font-family:var(--font-mono);font-size:14px;
+  padding:12px 4px;letter-spacing:1px;
+}
+#queryInput::placeholder{color:var(--text-dim);}
+#searchBtn{
+  border:1px solid var(--neon-purple);color:var(--neon-purple);
+  background:rgba(0,204,0,0.08);
+  padding:12px 26px;letter-spacing:3px;font-size:12px;font-family:var(--font-mono);
+  cursor:pointer;transition:all .2s;position:relative;overflow:hidden;
+}
+#searchBtn:hover{background:var(--neon-purple);color:#020a04;box-shadow:0 0 20px var(--neon-purple);}
+#searchBtn:active{transform:scale(0.97);}
+
+#suggestBox {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-top: none;
+  max-height: 250px;
+  overflow-y: auto;
+  z-index: 100;
+  display: none;
+}
+.suggest-item {
+  padding: 10px 14px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(0, 255, 102, 0.1);
+  color: var(--text);
+  font-size: 13px;
+  transition: background 0.15s;
+}
+.suggest-item:hover, .suggest-item.focused {
+  background: rgba(0, 255, 102, 0.15);
+  color: var(--neon-blue);
+}
+.suggest-item .code { color: var(--neon-green); font-family: var(--font-mono); }
+
+/* メインダッシュボード: 中央=結果 / 右=ログ */
+.dashboard{
+  display:grid;
+  grid-template-columns:1fr 300px;
+  min-height:0;
+}
+@media (max-width:900px){ .dashboard{grid-template-columns:1fr;} .log-panel{display:none;} }
+
+.results-panel{
+  padding:22px;overflow-y:auto;
+  display:flex;flex-direction:column;gap:18px;
+  position:relative;min-height:60vh;
+}
+
+/* ログパネル */
+.log-panel{
+  border-left:1px solid var(--border);
+  padding:16px 14px;overflow-y:auto;
+  background:rgba(2,10,4,0.6);
+  display:flex;flex-direction:column;gap:6px;
+  font-size:11px;
+}
+.log-panel h3{
+  color:var(--neon-cyan);font-size:11px;letter-spacing:3px;margin-bottom:10px;
+  border-bottom:1px solid var(--border);padding-bottom:8px;
+}
+.log-line{
+  color:var(--text-dim);opacity:0;transform:translateX(8px);
+  animation:logIn .35s forwards;
+  line-height:1.5;word-break:break-all;
+}
+.log-line .ts{color:var(--neon-purple);margin-right:6px;}
+.log-line.ok{color:var(--neon-green);}
+@keyframes logIn{ to{opacity:1;transform:translateX(0);} }
+
+/* 下: 通信状態バー */
+footer.statusbar{
+  border-top:1px solid var(--border);
+  padding:8px 24px;display:flex;justify-content:space-between;
+  font-size:10px;color:var(--text-dim);letter-spacing:2px;
+  background:rgba(5,20,8,0.7);
+}
+footer.statusbar b{color:var(--neon-cyan);}
+
+/* スキャンフラッシュ演出 */
+#scanFlash{
+  position:fixed;inset:0;z-index:60;pointer-events:none;
+  background:linear-gradient(180deg, transparent, rgba(0,255,102,0.35), transparent);
+  height:100%;transform:translateY(-100%);opacity:0;
+}
+#scanFlash.run{animation:scanSweep .7s ease-out;}
+@keyframes scanSweep{
+  0%{transform:translateY(-100%);opacity:0;}
+  10%{opacity:1;}
+  100%{transform:translateY(100%);opacity:0;}
+}
+
+/* ============ 起動アニメーション ============ */
+#crt-boot {
+  position: fixed; inset: 0; z-index: 9999;
+  background: #000; color: #00ff66; font-family: var(--font-mono);
+  display: flex; align-items: center; justify-content: center;
+  flex-direction: column; text-align: left;
+  animation: bootOff 2.5s 1.5s forwards;
+}
+.boot-text p {
+  overflow: hidden; white-space: nowrap; border-right: .15em solid #00ff66;
+  margin: 0; padding: 5px; font-size: 14px; width: 0;
+  animation: typing 0.5s steps(40, end) forwards, blink-caret .75s step-end infinite;
+}
+.boot-text p:nth-child(1) { animation-delay: 0s, 0s; }
+.boot-text p:nth-child(2) { animation-delay: 0.5s, 0.5s; }
+.boot-text p:nth-child(3) { animation-delay: 0.8s, 0.8s; }
+.boot-text p:nth-child(4) { animation-delay: 1.2s, 1.2s; }
+@keyframes typing { from { width: 0 } to { width: 100%; border-color: transparent; } }
+@keyframes blink-caret { from, to { border-color: transparent } 50% { border-color: #00ff66; } }
+@keyframes bootOff { 
+  0% { opacity: 1; } 
+  80% { opacity: 1; filter: brightness(1); } 
+  90% { opacity: 1; filter: brightness(3); transform: scaleY(0.01); } 
+  100% { opacity: 0; transform: scaleY(0); visibility: hidden; pointer-events: none; } 
+}
+
+/* ============ カード ============ */
+.card{
+  --accent:#00ff66;
+  background:linear-gradient(160deg, rgba(5,20,8,0.9), rgba(2,10,4,0.9));
+  border:1px solid rgba(0,255,102,0.1);
+  border-left:3px solid var(--accent);
+  position:relative;
+  opacity:0;
+  transform:translateY(24px) scale(0.94);
+  transition:transform .35s ease, box-shadow .35s ease, border-color .35s ease;
+  overflow:hidden;
+}
+.card.enter {
+  animation: buildIn 0.7s cubic-bezier(0.1, 0.9, 0.2, 1) forwards;
+}
+@keyframes buildIn {
+  0% { 
+    opacity: 0; 
+    clip-path: inset(0 0 100% 0); 
+    filter: drop-shadow(0 0 20px var(--accent)) brightness(2);
+    transform: translateY(10px);
+  }
+  100% { 
+    opacity: 1; 
+    clip-path: inset(0 0 0% 0); 
+    filter: drop-shadow(0 0 0px transparent) brightness(1);
+    transform: translateY(0);
+  }
+}
+.card:hover{
+  transform: translateY(-2px);
+  box-shadow:0 0 20px var(--accent-glow, rgba(0,255,102,0.35));
+  border-color:var(--accent);
+  z-index:10;
+}
+.card::before{ /* ノイズ/発光オーバーレイ */
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(circle at 20% 0%, var(--accent) 0%, transparent 60%);
+  opacity:0;transition:opacity .4s;
+}
+.card:hover::before{opacity:0.15;}
+.card.status-error{border-left-color:#ff3b5c;}
+.card.status-empty{border-left-color:#555;}
+
+.card-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 14px;border-bottom:1px solid rgba(0,255,102,0.1);
+  background:rgba(0,255,102,0.03);
+  cursor:pointer;user-select:none;
+}
+.card-head .site-tag{
+  display:flex;align-items:center;gap:8px;
+  font-size:11px;letter-spacing:2px;color:var(--accent);
+  text-shadow:0 0 8px var(--accent);
+}
+.card-head .site-tag .icon{
+  width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--accent);font-size:11px;flex-shrink:0;
+}
+.card-head .site-tag .count-badge{
+  font-size:9px;color:var(--bg);background:var(--accent);
+  padding:1px 7px;border-radius:10px;letter-spacing:0;font-weight:bold;
+}
+.card-head .head-right{display:flex;align-items:center;gap:12px;}
+.card-head .fetched-at{font-size:9px;color:var(--text-dim);letter-spacing:1px;}
+.card-head .toggle-arrow{font-size:11px;color:var(--accent);transition:transform .25s;}
+.card.collapsed .toggle-arrow{transform:rotate(-90deg);}
+
+.card-hero{
+  width:100%;height:130px;object-fit:cover;display:block;
+  filter:saturate(1.2) contrast(1.1) sepia(1) hue-rotate(90deg); /* Matrix feel */
+  border-bottom:1px solid rgba(0,255,102,0.1);
+  background:#051408;
+}
+.card-meta-line{
+  padding:8px 14px;font-size:10.5px;color:var(--neon-cyan);
+  border-bottom:1px dashed rgba(0,255,102,0.15);
+}
+
+.card-list{
+  max-height:480px;overflow-y:auto;
+  transition:max-height .3s ease, padding .3s ease;
+}
+.card.collapsed .card-list{max-height:0;overflow:hidden;}
+
+.item-row{
+  display:flex;gap:10px;padding:10px 14px;
+  border-bottom:1px solid rgba(0,255,102,0.05);
+  transition:background .15s;
+}
+.item-row:hover{background:rgba(0,255,102,0.08);}
+.item-row:last-child{border-bottom:none;}
+.item-thumb{
+  width:56px;height:42px;object-fit:cover;flex-shrink:0;
+  border:1px solid rgba(0,255,102,0.2);background:#051408;
+  filter: sepia(1) hue-rotate(90deg);
+}
+.item-thumb-fallback{
+  width:56px;height:42px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
+  border:1px solid rgba(0,255,102,0.2);color:var(--accent);opacity:.45;font-size:16px;
+}
+.item-index{
+  width:26px;flex-shrink:0;font-size:10px;color:var(--text-dim);
+  text-align:right;padding-top:2px;
+}
+.item-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px;}
+.item-title{
+  font-size:11.5px;color:var(--text);text-decoration:none;line-height:1.4;font-weight:600;
+}
+.item-title:hover{color:var(--accent);text-shadow:0 0 6px var(--accent);}
+.item-snippet{font-size:10px;color:var(--text-dim);line-height:1.5;}
+.item-meta{font-size:9.5px;color:var(--neon-green);letter-spacing:0.5px;}
+
+.card-foot{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:8px 14px;border-top:1px solid rgba(0,255,102,0.1);
+  background:rgba(0,255,102,0.03);
+}
+.card-link{font-size:10px;color:var(--accent);text-decoration:none;letter-spacing:1px;}
+.card-link:hover{text-shadow:0 0 8px var(--accent);}
+.source-tag{font-size:9px;color:var(--text-dim);letter-spacing:1px;}
+
+.empty-state{
+  grid-column:1/-1;text-align:center;color:var(--text-dim);
+  padding:60px 20px;font-size:12px;letter-spacing:2px;
+}
+.empty-state .big{font-size:40px;margin-bottom:14px;color:var(--neon-blue);opacity:.4;}
+
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(0,255,102,0.25);border-radius:4px;}
+</style>
+</head>
+<body>
+
+<div id="crt-boot">
+  <div class="boot-text">
+    <p>INIT MATRIX BOOT SEQUENCE...</p>
+    <p>LOADING MODULES [OK]</p>
+    <p>ESTABLISHING CONNECTION [OK]</p>
+    <p>CYBER INTELLIGENCE SYSTEM ONLINE</p>
+  </div>
+</div>
+
+<canvas id="bg-canvas"></canvas>
+<div class="grid-bg"></div>
+<div class="scanlines"></div>
+<div class="vignette"></div>
+<div id="scanFlash"></div>
+
+<div id="app">
+  <header class="titlebar">
+    <div class="brand">
+      <div class="glyph">Ψ</div>
+      <div>
+        <h1>CYBER INTELLIGENCE // NEWS MONITOR</h1>
+        <span class="sub">REAL-TIME OSINT CONTINUOUS SCAN</span>
+      </div>
+    </div>
+    <div class="status-chip" id="connStatus">SYSTEM ONLINE</div>
+  </header>
+
+  <div class="search-zone">
+    <div class="search-input-wrap">
+      <input id="queryInput" type="text" placeholder="モニタリングするキーワードを入力し MONITOR を実行してください..." autocomplete="off" />
+      <div id="suggestBox"></div>
+    </div>
+    <button id="searchBtn">START MONITORING ▷</button>
+  </div>
+
+  <div id="stockBanner" style="display: none; padding: 14px 24px; background: rgba(5, 20, 8, 0.8); border-bottom: 1px solid var(--border); align-items: center; justify-content: space-between;">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <span id="stockName" style="font-size: 18px; font-weight: bold; color: var(--neon-blue); letter-spacing: 2px;"></span>
+      <span id="stockCode" style="font-size: 12px; color: var(--text-dim); letter-spacing: 1px;"></span>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 16px;">
+      <span id="stockPrice" style="font-size: 24px; font-weight: bold; color: var(--text); font-family: var(--font-mono);"></span>
+      <span id="stockChange" style="font-size: 14px; font-weight: bold; font-family: var(--font-mono);"></span>
+      <span id="stockChangePct" style="font-size: 14px; font-weight: bold; font-family: var(--font-mono);"></span>
+
+      <span style="font-size: 10px; color: var(--neon-green); letter-spacing: 1px; border: 1px solid var(--neon-green); padding: 2px 6px; border-radius: 2px;">※15分ディレイ</span>
+    </div>
+  </div>
+
+
+  <div class="dashboard">
+    <main class="results-panel" id="resultsPanel">
+      <div class="empty-state" id="emptyState">
+        <div class="big">◇</div>
+        キーワードを入力してモニタリングを開始してください<br>
+        60秒ごとに新規ニュースを巡回し、自動的に画面に追加します<br>
+      </div>
+    </main>
+    <aside class="log-panel" id="logPanel">
+      <h3>// LIVE LOG</h3>
+      <div id="logStream"></div>
+    </aside>
+  </div>
+
+  <footer class="statusbar">
+    <span>LINK: <b id="linkState">STANDBY</b></span>
+    <span id="progressState">ARTICLES FOUND: 0</span>
+    <span id="clock"></span>
+  </footer>
+</div>
+
+<script>
+/* =========================================================
+   背景: 動く六角形 + 粒子 + ネットワーク線 (Canvas)
+   ========================================================= */
+const canvas = document.getElementById('bg-canvas');
+const ctx = canvas.getContext('2d');
+let W, H;
+function resize(){ W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
+
+const PARTICLES = Array.from({length: 60}, () => ({
+  x: Math.random()*W, y: Math.random()*H,
+  vx: (Math.random()-0.5)*0.25, vy: (Math.random()-0.5)*0.25,
+  r: Math.random()*1.6+0.4
+}));
+
+function drawHex(cx, cy, size, rot, alpha){
+  ctx.beginPath();
+  for(let i=0;i<6;i++){
+    const a = rot + i*Math.PI/3;
+    const x = cx + size*Math.cos(a), y = cy + size*Math.sin(a);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = `rgba(0,255,102,${alpha})`; // Changed to green
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+let t = 0;
+function animateBg(){
+  ctx.clearRect(0,0,W,H);
+
+  // 六角形 (ゆっくり回転する装飾)
+  drawHex(W*0.85, H*0.2, 70, t*0.001, 0.12);
+  drawHex(W*0.12, H*0.75, 100, -t*0.0007, 0.08);
+  drawHex(W*0.5, H*0.9, 50, t*0.0015, 0.1);
+
+  // 粒子 + ネットワーク線
+  for(const p of PARTICLES){
+    p.x += p.vx; p.y += p.vy;
+    if(p.x<0||p.x>W) p.vx*=-1;
+    if(p.y<0||p.y>H) p.vy*=-1;
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+    ctx.fillStyle = 'rgba(0,255,102,0.5)'; // Changed to green
+    ctx.fill();
+  }
+  for(let i=0;i<PARTICLES.length;i++){
+    for(let j=i+1;j<PARTICLES.length;j++){
+      const a=PARTICLES[i], b=PARTICLES[j];
+      const d = Math.hypot(a.x-b.x, a.y-b.y);
+      if(d<120){
+        ctx.beginPath();
+        ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y);
+        ctx.strokeStyle = `rgba(0,255,102,${0.08*(1-d/120)})`; // Changed to green
+        ctx.stroke();
+      }
+    }
+  }
+  t++;
+  requestAnimationFrame(animateBg);
+}
+animateBg();
+
+/* 時計 */
+function tickClock(){
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('ja-JP', {hour12:false});
+}
+setInterval(tickClock, 1000); tickClock();
+
+/* =========================================================
+   モニタリング処理
+   ========================================================= */
+const queryInput = document.getElementById('queryInput');
+const suggestBox = document.getElementById('suggestBox');
+const searchBtn = document.getElementById('searchBtn');
+const resultsPanel = document.getElementById('resultsPanel');
+const emptyState = document.getElementById('emptyState');
+const logStream = document.getElementById('logStream');
+const scanFlash = document.getElementById('scanFlash');
+const linkState = document.getElementById('linkState');
+const progressState = document.getElementById('progressState');
+
+let suggestDebounce = null;
+let currentFocus = -1;
+
+queryInput.addEventListener('input', () => {
+  clearTimeout(suggestDebounce);
+  const q = queryInput.value.trim();
+  if(!q) { suggestBox.style.display = 'none'; return; }
+
+  suggestDebounce = setTimeout(async () => {
+    try {
+      const res = await fetch(`/api/suggest?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      if(!data || data.length === 0) {
+        suggestBox.style.display = 'none';
+        return;
+      }
+      suggestBox.innerHTML = '';
+      data.forEach((item) => {
+        const div = document.createElement('div');
+        div.className = 'suggest-item';
+        div.innerHTML = `<span class="name">${escapeHtml(item.name)}</span><span class="code">${escapeHtml(item.code)}</span>`;
+        div.addEventListener('click', () => {
+          queryInput.value = item.name; // Use name as search keyword
+          suggestBox.style.display = 'none';
+          runSearch();
+        });
+        suggestBox.appendChild(div);
+      });
+      suggestBox.style.display = 'block';
+      currentFocus = -1;
+    } catch(e) {
+      console.error(e);
+    }
+  }, 300);
+});
+
+queryInput.addEventListener('keydown', (e) => {
+  const items = suggestBox.getElementsByClassName('suggest-item');
+  if(e.key === 'ArrowDown') {
+    if (suggestBox.style.display === 'block') {
+      e.preventDefault();
+      currentFocus++;
+      addActive(items);
+    }
+  } else if(e.key === 'ArrowUp') {
+    if (suggestBox.style.display === 'block') {
+      e.preventDefault();
+      currentFocus--;
+      addActive(items);
+    }
+  } else if(e.key === 'Enter') {
+    e.preventDefault();
+    if(suggestBox.style.display === 'block' && currentFocus > -1 && items.length > 0) {
+      items[currentFocus].click();
+    } else {
+      suggestBox.style.display = 'none';
+      runSearch();
+    }
+  } else if(e.key === 'Escape') {
+    suggestBox.style.display = 'none';
+  }
+});
+
+function addActive(items) {
+  if(!items || items.length === 0) return false;
+  removeActive(items);
+  if(currentFocus >= items.length) currentFocus = 0;
+  if(currentFocus < 0) currentFocus = (items.length - 1);
+  items[currentFocus].classList.add('focused');
+  items[currentFocus].scrollIntoView({block: 'nearest'});
+}
+
+function removeActive(items) {
+  for(let i = 0; i < items.length; i++) {
+    items[i].classList.remove('focused');
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if(e.target !== queryInput && e.target !== suggestBox) {
+    suggestBox.style.display = 'none';
+  }
+});
+
+function pushLog(msg, ok=false){
+  const line = document.createElement('div');
+  line.className = 'log-line' + (ok ? ' ok' : '');
+  const ts = new Date().toLocaleTimeString('ja-JP', {hour12:false});
+  line.innerHTML = `<span class="ts">[${ts}]</span> > ${escapeHtml(msg)}`;
+  logStream.appendChild(line);
+  logStream.parentElement.scrollTop = logStream.parentElement.scrollHeight;
+  while(logStream.children.length > 80) logStream.removeChild(logStream.firstChild);
+}
+
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function makeCard(data, index){
+  const card = document.createElement('div');
+  card.className = 'card status-' + (data.status || 'ok');
+  card.style.setProperty('--accent', 'var(--neon-blue)'); 
+  card.style.setProperty('--accent-glow', hexToRgba('#00ff66', 0.35));
+  card.style.animationDelay = (index * 0.05) + 's';
+
+  const items = Array.isArray(data.items) ? data.items : [];
+  const iconChar = data.icon || '◆';
+
+  const heroHtml = data.hero_image
+    ? `<img class="card-hero" src="${data.hero_image}" alt="" onerror="this.remove()">`
+    : '';
+
+  const rowsHtml = items.map((it, i) => {
+    const thumb = it.image
+      ? `<img class="item-thumb" src="${it.image}" alt="" onerror="this.replaceWith(thumbFallback('${iconChar.replace(/'/g,"")}'))">`
+      : `<div class="item-thumb-fallback">${escapeHtml(iconChar)}</div>`;
+    return `
+      <div class="item-row">
+        <span class="item-index">${i+1}</span>
+        ${thumb}
+        <div class="item-main">
+          ${it.url
+            ? `<a class="item-title" href="${it.url}" target="_blank" rel="noopener">${escapeHtml(it.title || '(no title)')}</a>`
+            : `<span class="item-title">${escapeHtml(it.title || '(no title)')}</span>`}
+          ${it.snippet ? `<div class="item-snippet">${escapeHtml(it.snippet)}</div>` : ''}
+          ${it.meta ? `<div class="item-meta">${escapeHtml(it.meta)}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  const bodyHtml = items.length
+    ? `<div class="card-list">${rowsHtml}</div>`
+    : `<div class="card-list"><div class="item-row"><div class="item-main"><span class="item-snippet">${escapeHtml(data.summary || 'データが見つかりませんでした')}</span></div></div></div>`;
+
+  card.innerHTML = `
+    <div class="card-head">
+      <div class="site-tag">
+        <span class="icon">${escapeHtml(iconChar)}</span>
+        ${escapeHtml(data.site)}
+        <span class="count-badge">${data.total_items || 0} NEW</span>
+      </div>
+      <div class="head-right">
+        <span class="fetched-at">${escapeHtml(data.fetched_at || '')}</span>
+        <span class="toggle-arrow">▾</span>
+      </div>
+    </div>
+    ${heroHtml}
+    ${data.summary ? `<div class="card-meta-line">${escapeHtml(data.summary)}</div>` : ''}
+    ${bodyHtml}
+  `;
+
+  card.querySelector('.card-head').addEventListener('click', () => {
+    card.classList.toggle('collapsed');
+  });
+
+  return card;
+}
+
+function thumbFallback(icon){
+  const div = document.createElement('div');
+  div.className = 'item-thumb-fallback';
+  div.textContent = icon;
+  return div;
+}
+
+function hexToRgba(hex, alpha){
+  if(!hex) return `rgba(0,255,102,${alpha})`;
+  const h = hex.replace('#','');
+  const bigint = parseInt(h.length===3
+    ? h.split('').map(c=>c+c).join('') : h, 16);
+  const r = (bigint>>16)&255, g=(bigint>>8)&255, b=bigint&255;
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+let totalHits = 0;
+let currentEventSource = null;
+
+function runSearch(){
+  const query = queryInput.value.trim();
+  if(!query) { queryInput.focus(); return; }
+
+  if(currentEventSource) {
+    currentEventSource.close();
+  }
+
+  // スキャンフラッシュ演出
+  scanFlash.classList.remove('run'); void scanFlash.offsetWidth; scanFlash.classList.add('run');
+
+  // リセット
+  resultsPanel.innerHTML = '';
+  logStream.innerHTML = '';
+  totalHits = 0;
+  linkState.textContent = 'CONNECTING';
+  linkState.style.color = 'var(--neon-purple)';
+  progressState.textContent = 'ARTICLES FOUND: 0';
+  searchBtn.textContent = 'MONITORING...';
+  searchBtn.style.color = 'var(--neon-green)';
+
+  pushLog(`Starting monitor for: "${query}"`, true);
+
+  const es = new EventSource(`/search-stream?q=${encodeURIComponent(query)}`);
+  currentEventSource = es;
+
+  document.getElementById('stockBanner').style.display = 'none';
+
+  es.addEventListener('stock', (e) => {
+    const data = JSON.parse(e.data);
+    if(data.status === 'ok') {
+      document.getElementById('stockBanner').style.display = 'flex';
+      document.getElementById('stockName').textContent = data.name;
+      document.getElementById('stockCode').textContent = data.code;
+      document.getElementById('stockPrice').textContent = data.price;
+      
+      const changeEl = document.getElementById('stockChange');
+      const pctEl = document.getElementById('stockChangePct');
+      changeEl.textContent = data.change || '';
+      pctEl.textContent = data.change_pct || '';
+
+      let color = '#888888'; // gray
+      if (data.raw_change > 0) color = '#00ff66'; // green
+      else if (data.raw_change < 0) color = '#ff3b5c'; // red
+      
+      changeEl.style.color = color;
+      pctEl.style.color = color;
+    }
+  });
+
+  es.addEventListener('heartbeat', (e) => {
+    // Optional: could show a little blink indicator
+  });
+
+  es.addEventListener('start', (e) => {
+    linkState.textContent = 'LINK ESTABLISHED - LIVE PUSH ACTIVE';
+    linkState.style.color = 'var(--neon-green)';
+    if(emptyState) {
+        emptyState.style.display = 'none';
+    }
+  });
+
+  es.addEventListener('log', (e) => {
+    const data = JSON.parse(e.data);
+    pushLog(data.message, /Found|new articles/.test(data.message));
+  });
+
+  es.addEventListener('result', (e) => {
+    const data = JSON.parse(e.data);
+    
+    if(data.status === 'empty' || !data.items || data.items.length === 0) {
+      return; 
+    }
+    
+    totalHits += (data.total_items || 0);
+    progressState.textContent = `ARTICLES FOUND: ${totalHits}`;
+
+    const card = makeCard(data, 1);
+    // PREPEND instead of append
+    resultsPanel.insertBefore(card, resultsPanel.firstChild);
+    requestAnimationFrame(() => card.classList.add('enter'));
+  });
+
+  es.addEventListener('error', (e) => {
+    let detail = 'connection closed';
+    if (e && e.data) {
+      try { detail = JSON.parse(e.data).message || detail; } catch (_) {}
+    }
+    pushLog(`Stream error: ${detail}`, false);
+    linkState.textContent = 'ERROR / RECONNECTING';
+    linkState.style.color = '#ff3b5c';
+    searchBtn.textContent = 'START MONITORING ▷';
+    searchBtn.style.color = 'var(--neon-purple)';
+    es.close();
+  });
+}
+
+searchBtn.addEventListener('click', runSearch);
+</script>
+</body>
+</html>
