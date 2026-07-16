@@ -8,10 +8,11 @@ import threading
 import queue
 import os
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from urllib.parse import quote_plus
 from collections import defaultdict
-from typing import Dict, Set
+from typing import Dict, Optional, Set
 
 import yfinance as yf
 import requests
@@ -165,13 +166,28 @@ class NewsScraper(BaseScraper):
                 return self.empty("ニュースが見つかりませんでした")
             items = []
             for it in entries:
+                # pubDate を解析してタイムゾーン付き datetime に変換
+                pub_date_str = it.find("pubDate").text if it.find("pubDate") else ""
+                pub_dt: Optional[datetime] = None
+                if pub_date_str:
+                    try:
+                        pub_dt = parsedate_to_datetime(pub_date_str)
+                    except Exception:
+                        pub_dt = None
                 items.append({
                     "title": it.find("title").text if it.find("title") else "",
                     "url": it.find("link").text if it.find("link") else "",
                     "snippet": clean_text(it.find("description").text if it.find("description") else "", 150),
                     "meta": it.find("source").text if it.find("source") else "",
                     "image": None,
+                    "pub_date": pub_dt.isoformat() if pub_dt else "",
+                    "_pub_dt": pub_dt,  # 内部ソート用（送信時に除去）
                 })
+            # 公開日時の新しい順に並べ替え（pubDate なし記事は末尾）
+            items.sort(
+                key=lambda x: x["_pub_dt"] or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True,
+            )
             return self.result(items=items, pages_fetched=1, summary=f"{len(items)}件のニュースを取得")
         except Exception as e:
             return self.error(str(e))
@@ -250,6 +266,9 @@ class YahooStockProvider(BaseStockProvider):
         except Exception as e:
             return self.error(str(e))
 
+# --- News Cache (last result per query for new subscribers) ---
+_last_news_cache: Dict[str, dict] = {}
+
 # --- Event Broker ---
 
 class EventManager:
@@ -325,31 +344,58 @@ def stock_monitor_loop(query: str):
 
 def news_monitor_loop(query: str):
     scraper = NewsScraper()
-    seen_urls = set()
-    
+    seen_urls: Set[str] = set()          # 送信済みURL（永続蓄積→重複完全排除）
+    last_fetch_time: Optional[datetime] = None  # 前回フェッチ完了時刻
+
     while True:
         if not event_manager.has_subscribers(query):
             time.sleep(5)
             continue
-            
+
         try:
+            now_utc = datetime.now(timezone.utc)
             data = scraper.fetch(query)
             if data.get("status") == "ok":
+                # 新着判定の基準時刻
+                # ・初回: 過去24時間以内の記事のみ
+                # ・2回目以降: 前回フェッチ時刻より新しい記事のみ
+                if last_fetch_time is None:
+                    cutoff = now_utc - timedelta(hours=24)
+                else:
+                    cutoff = last_fetch_time
+
                 new_items = []
                 for item in data.get("items", []):
-                    if item["url"] not in seen_urls:
-                        seen_urls.add(item["url"])
-                        new_items.append(item)
-                
+                    url = item.get("url", "")
+                    pub_dt: Optional[datetime] = item.pop("_pub_dt", None)  # 内部フィールドを除去
+
+                    # URLが既読なら常にスキップ（重複排除）
+                    if not url or url in seen_urls:
+                        seen_urls.add(url)  # 念のため既読に登録
+                        continue
+
+                    # pubDate がある場合は基準時刻より古ければスキップ
+                    if pub_dt is not None and pub_dt <= cutoff:
+                        seen_urls.add(url)  # 古い記事も既読に登録して再出現を防ぐ
+                        continue
+
+                    # 新着記事として追加
+                    seen_urls.add(url)
+                    new_items.append(item)
+
+                last_fetch_time = now_utc  # フェッチ完了時刻を更新
+
                 if new_items:
-                    data["items"] = new_items
-                    data["total_items"] = len(new_items)
-                    data["summary"] = f"{len(new_items)}件の新規ニュース"
-                    event_manager.broadcast(query, "result", data)
-                    event_manager.broadcast(query, "log", {"message": f"Found {len(new_items)} new articles!"})
-        except Exception as e:
+                    send_data = dict(data)
+                    send_data["items"] = new_items
+                    send_data["total_items"] = len(new_items)
+                    send_data["summary"] = f"{len(new_items)}件の新着ニュース"
+                    _last_news_cache[query] = send_data
+                    event_manager.broadcast(query, "result", send_data)
+                    event_manager.broadcast(query, "log", {"message": f"{len(new_items)}件の新着記事を取得しました"})
+        except Exception:
             pass
-            
+
         time.sleep(60)
 
 # --- Flask Routes ---
@@ -402,6 +448,11 @@ def search_stream():
         registry.ensure_monitors(query)
         
         yield f"event: log\ndata: {json.dumps({'message': f'Subscribed to real-time events for {query}'})}\n\n"
+
+        # 新規接続クライアントにキャッシュ済みの最新ニュースを即送信
+        if query in _last_news_cache:
+            cached = _last_news_cache[query]
+            yield f"event: result\ndata: {json.dumps(cached, ensure_ascii=False)}\n\n"
 
         try:
             while True:
